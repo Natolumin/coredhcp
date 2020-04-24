@@ -7,6 +7,7 @@ package server
 import (
 	"fmt"
 	"net"
+	"runtime/debug"
 	"sync"
 
 	"golang.org/x/net/ipv4"
@@ -15,6 +16,25 @@ import (
 	"github.com/insomniacslk/dhcp/dhcpv4"
 	"github.com/insomniacslk/dhcp/dhcpv6"
 )
+
+func (l *listener6) runHandlers(req, resp dhcpv6.DHCPv6) dhcpv6.DHCPv6 {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Errorf("v6 handler panicked, aborting request: %v", r)
+			log.Error(string(debug.Stack()))
+			resp = nil
+		}
+	}()
+
+	stop := false
+	for _, handler := range l.handlers {
+		resp, stop = handler(req, resp)
+		if stop {
+			break
+		}
+	}
+	return resp
+}
 
 // HandleMsg6 runs for every received DHCPv6 packet. It will run every
 // registered handler in sequence, and reply with the resulting response.
@@ -54,13 +74,7 @@ func (l *listener6) HandleMsg6(buf []byte, oob *ipv6.ControlMessage, peer *net.U
 		return
 	}
 
-	var stop bool
-	for _, handler := range l.handlers {
-		resp, stop = handler(d, resp)
-		if stop {
-			break
-		}
-	}
+	resp = l.runHandlers(msg, resp)
 	if resp == nil {
 		log.Print("MainHandler6: dropping request because response is nil")
 		return
@@ -98,11 +112,29 @@ func (l *listener6) HandleMsg6(buf []byte, oob *ipv6.ControlMessage, peer *net.U
 	}
 }
 
+func (l *listener4) runHandlers(req, resp *dhcpv4.DHCPv4) *dhcpv4.DHCPv4 {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Errorf("v4 handler panicked, aborting request: %v", r)
+			log.Error(string(debug.Stack()))
+			resp = nil
+		}
+	}()
+
+	stop := false
+	for _, handler := range l.handlers {
+		resp, stop = handler(req, resp)
+		if stop {
+			break
+		}
+	}
+	return resp
+}
+
 func (l *listener4) HandleMsg4(buf []byte, oob *ipv4.ControlMessage, _peer net.Addr) {
 	var (
 		resp, tmp *dhcpv4.DHCPv4
 		err       error
-		stop      bool
 	)
 
 	req, err := dhcpv4.FromBytes(buf)
@@ -131,13 +163,7 @@ func (l *listener4) HandleMsg4(buf []byte, oob *ipv4.ControlMessage, _peer net.A
 		return
 	}
 
-	resp = tmp
-	for _, handler := range l.handlers {
-		resp, stop = handler(req, resp)
-		if stop {
-			break
-		}
-	}
+	resp = l.runHandlers(req, tmp)
 
 	if resp != nil {
 		var peer *net.UDPAddr
