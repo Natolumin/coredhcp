@@ -55,3 +55,13 @@ type LeaseStore interface {
 	// It must handle being called from Update() or Lookup(). It is called when the token is invalidated
 	ReleaseToken(*Token)
 }
+
+// AtomicLeaseStore is an interface for lease stores that can exclusively lock their backing store
+// to ensure serializable operations
+type AtomicLeaseStore interface {
+	LeaseStore
+
+	// Mutate changes the leases in a single operation, taking a function to apply on the leases array
+	// The mutator MUST NOT block or take locks to avoid any deadlocks
+	Mutate(ClientID, func([]Lease) ([]Lease, error)) error
+}
